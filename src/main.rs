@@ -288,34 +288,36 @@ fn dot(b1: u8, b2: u8) -> u8 {
 }
 
 fn sub_bytes(state: &mut [[u8; 4]; 4]) {
-    let c: [u8; 8] = [1, 1, 0, 0, 0, 1, 1, 0];
-    let mat: [u8; 8] = [0x8F, 0xC7, 0xE3, 0xF1, 0xF8, 0x7C, 0x3E, 0x1F];
-    let mut new_state: [[u8; 4]; 4] = [[0_u8; 4]; 4];
-
-    // This first double-for-loop is to loop through the bytes in the state
     for i in 0..4 {
         for j in 0..4 {
-            let b: u8;
-            if state[i][j] != 0 {
-                b = INVERSES[state[i][j] as usize];
-            } else {
-                b = 0;
-            }
+            state[i][j] = SBOX[state[i][j] as usize];
+        }
+    } 
+}
 
-            // Now that we have a particular byte in hand, we proceed
-            // substituting it in the new_state
+fn shift_rows(state: &mut [[u8; 4]; 4]) {
+    let mut new_state: [[u8; 4]; 4] = [[0_u8; 4]; 4];
 
-            // This performs an affine transformation and results in a 
-            // binary representation of the new byte
-            let mut new_bin: [u8; 8] = [0_u8; 8];
-            for k in 0..8 {
-                new_bin[k] = dot(mat[k], b) ^ c[k];
-            }
-
-            new_state[i][j] = bin_to_byte(new_bin);
+    for i in 0..4 {
+        for j in 0..4 {
+            new_state[i][j] = state[i][(i+j)%4];
         }
     }
     *state = new_state;
+}
+
+fn mix_columns(state: &mut [[u8; 4]; 4]) {
+    let mut new_state: [[u8; 4]; 4] = (*state).clone();
+    let mat: [[u8; 4]; 4] = [[0x02, 0x03, 0x01, 0x01],
+                             [0x01, 0x02, 0x03, 0x01],
+                             [0x01, 0x01, 0x02, 0x03],
+                             [0x03, 0x01, 0x01, 0x02]];
+
+    for c in 0..4 {
+        for r in 0..4 {
+            state[r][c] = new_state[r][c] ^ prod(mat[r][c], state[r][c]);
+        }
+    }
 }
 
 fn main() {
