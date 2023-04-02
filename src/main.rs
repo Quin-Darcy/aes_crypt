@@ -1,6 +1,6 @@
 // Data input and output for the AES block ciphers are blocks
-#[allow(unused_variables)]
-#[allow(dead_code)]
+#![allow(unused_variables)]
+#![allow(dead_code)]
 
 const BINS: [[u8; 8]; 256] = [[0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,1],[0,0,0,0,0,0,1,0],[0,0,0,0,0,0,1,1],
                                 [0,0,0,0,0,1,0,0],[0,0,0,0,0,1,0,1],[0,0,0,0,0,1,1,0],[0,0,0,0,0,1,1,1],
@@ -68,6 +68,7 @@ const BINS: [[u8; 8]; 256] = [[0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,1],[0,0,0,0,0,0,1
                                 [1,1,1,1,1,1,0,0],[1,1,1,1,1,1,0,1],[1,1,1,1,1,1,1,0],[1,1,1,1,1,1,1,1]];
 
 
+// XPOW_PRODS[i][j] = (x^i)*j (as polynomials)
 const XPOW_PRODS: [[u8; 256]; 8] = [[0x0,0x1,0x2,0x3,0x4,0x5,0x6,0x7,0x8,0x9,0xa,0xb,0xc,0xd,0xe,0xf,
                                 0x10,0x11,0x12,0x13,0x14,0x15,0x16,0x17,0x18,0x19,0x1a,0x1b,0x1c,0x1d,0x1e,0x1f,
                                 0x20,0x21,0x22,0x23,0x24,0x25,0x26,0x27,0x28,0x29,0x2a,0x2b,0x2c,0x2d,0x2e,0x2f,
@@ -259,9 +260,15 @@ fn prod(b1: u8, b2: u8) -> u8 {
     let mut product: u8 = 0;
 
     unsafe{
-        if GLOBAL_PRODUCT_CACHE[b1 as usize][b2 as usize] != 0 {
+        if GLOBAL_PRODUCT_CACHE[b1 as usize][b2 as usize] != 0 && b1 != 0 && b2 != 0 {
             product = GLOBAL_PRODUCT_CACHE[b1 as usize][b2 as usize];
         } else {
+            /*
+             | b1 * b2 = (a7x^7+a6x^6+d5x^5+a4x^4+a3x^3+a2x^2+a1x^1+a0x^0) * b2
+             |         = (a7x^7 * b2) + (a6x^6 * b2) + ... + (a0x^0 * b2)
+             |         = XPOW_PROD[7][b2] + XPOW_PROD[6][b2] + ... + XPOW_PROD[0][b2]
+             |         = XPOW_PROD[7][b2] ^ ... ^ XPOW_PROD[0][b2]
+             */ 
             let temp: u8 = b1;
             for i in 0..8 {
                 if bin[i] == 1 {
@@ -276,17 +283,7 @@ fn prod(b1: u8, b2: u8) -> u8 {
     }
 }
 
-fn dot(b1: u8, b2: u8) -> u8 {
-    let mut dot_prod: u8 = 0;
-    let bin1: [u8; 8] = BINS[b1 as usize];
-    let bin2: [u8; 8] = BINS[b2 as usize];
-
-    for i in 0..7 {
-        dot_prod = dot_prod ^ (bin1[i] * bin2[i]);
-    }
-    return dot_prod;
-}
-
+// Tested
 fn sub_bytes(state: &mut [[u8; 4]; 4]) {
     for i in 0..4 {
         for j in 0..4 {
@@ -295,6 +292,7 @@ fn sub_bytes(state: &mut [[u8; 4]; 4]) {
     } 
 }
 
+// Tested
 fn shift_rows(state: &mut [[u8; 4]; 4]) {
     let mut new_state: [[u8; 4]; 4] = [[0_u8; 4]; 4];
 
@@ -306,8 +304,9 @@ fn shift_rows(state: &mut [[u8; 4]; 4]) {
     *state = new_state;
 }
 
+
 fn mix_columns(state: &mut [[u8; 4]; 4]) {
-    let mut new_state: [[u8; 4]; 4] = (*state).clone();
+    let new_state: [[u8; 4]; 4] = (*state).clone();
     let mat: [[u8; 4]; 4] = [[0x02, 0x03, 0x01, 0x01],
                              [0x01, 0x02, 0x03, 0x01],
                              [0x01, 0x01, 0x02, 0x03],
@@ -326,6 +325,13 @@ fn main() {
                                     [0xe1, 0xcd, 0xab, 0x99],
                                     [0x80, 0x5a, 0x6b, 0x9f]];
 
-    sub_bytes(&mut state);
-    println!("{:x?}", state);
+    let b1: u8 = 0x88;
+    let b2: u8 = 0x11;
+    println!("{:x}", prod(b2, b1));
+    /*
+    shift_rows(&mut state);
+    for row in state {
+        println!("{:x?}", row);
+    }
+    */
 }
