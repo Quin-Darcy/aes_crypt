@@ -1,6 +1,8 @@
 // Data input and output for the AES block ciphers are blocks
 #![allow(unused_variables)]
 #![allow(dead_code)]
+#![allow(non_upper_case_globals)]
+#![allow(non_snake_case)]
 
 const BINS: [[u8; 8]; 256] = [[0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,1],[0,0,0,0,0,0,1,0],[0,0,0,0,0,0,1,1],
                                 [0,0,0,0,0,1,0,0],[0,0,0,0,0,1,0,1],[0,0,0,0,0,1,1,0],[0,0,0,0,0,1,1,1],
@@ -241,9 +243,17 @@ const SBOX: [u8; 256] = [0x63,0x7c,0x77,0x7b,0xf2,0x6b,0x6f,0xc5,0x30,0x01,0x67,
                          0xe1,0xf8,0x98,0x11,0x69,0xd9,0x8e,0x94,0x9b,0x1e,0x87,0xe9,0xce,0x55,0x28,0xdf,
                          0x8c,0xa1,0x89,0x0d,0xbf,0xe6,0x42,0x68,0x41,0x99,0x2d,0x0f,0xb0,0x54,0xbb,0x16];
 
+const RCON: [[u8; 4]; 10] = [[0x01,0x00,0x00,0x00],[0x02,0x00,0x00,0x00],[0x04,0x00,0x00,0x00],[0x08,0x00,0x00,0x00],[0x10,0x00,0x00,0x00],
+                             [0x20,0x00,0x00,0x00],[0x40,0x00,0x00,0x00],[0x80,0x00,0x00,0x00],[0x1b,0x00,0x00,0x00],[0x36,0x00,0x00,0x00]];
+
 // Cache which fills during runtime containing all products taken throughout runtime
 static mut GLOBAL_PRODUCT_CACHE: [[u8; 256]; 256] = [[0_u8; 256]; 256];
 
+// Key length = 32 * Nk
+const Nk: u32 = 4;
+
+// Blocksize -- always 128
+const Nb: u32 = 128;
 
 fn bin_to_byte(bin:  [u8; 8]) -> u8 {
     let mut dec: u8 = 0;
@@ -254,13 +264,26 @@ fn bin_to_byte(bin:  [u8; 8]) -> u8 {
     dec
 }
 
+// Tested and optimized with GPT
+fn dot(w1: [u8; 4], w2: [u8; 4]) -> u8 {
+    /*
+    let mut dp: u8 = 0;
+    for i in 0..4 {
+        dp = dp ^ prod(w1[i], w2[i]);
+    }
+    return dp;
+    */
+    w1.iter().zip(w2.iter()).fold(0, |acc, (&a, &b)| acc ^ prod(a, b))
+}
+
+// Tested
 fn prod(b1: u8, b2: u8) -> u8 {
     let bin: [u8; 8] = BINS[b1 as usize];
     let mut mult_val: u8;
     let mut product: u8 = 0;
 
     unsafe{
-        if GLOBAL_PRODUCT_CACHE[b1 as usize][b2 as usize] != 0 && b1 != 0 && b2 != 0 {
+        if GLOBAL_PRODUCT_CACHE[b1 as usize][b2 as usize] != 0 {
             product = GLOBAL_PRODUCT_CACHE[b1 as usize][b2 as usize];
         } else {
             /*
@@ -281,6 +304,14 @@ fn prod(b1: u8, b2: u8) -> u8 {
         }
         product
     }
+}
+
+fn rot_word(w: [u8; 4]) -> [u8; 4] {
+    return [w[1], w[2], w[3], w[0]];
+}
+
+fn sub_word(w: [u8; 4]) -> [u8; 4] {
+    return [SBOX[w[0] as usize], SBOX[w[1] as usize], SBOX[w[2] as usize], SBOX[w[3] as usize]];
 }
 
 // Tested
@@ -304,34 +335,71 @@ fn shift_rows(state: &mut [[u8; 4]; 4]) {
     *state = new_state;
 }
 
-
+// Tested
 fn mix_columns(state: &mut [[u8; 4]; 4]) {
-    let new_state: [[u8; 4]; 4] = (*state).clone();
+    let state_copy: [[u8; 4]; 4] = (*state).clone();
     let mat: [[u8; 4]; 4] = [[0x02, 0x03, 0x01, 0x01],
                              [0x01, 0x02, 0x03, 0x01],
                              [0x01, 0x01, 0x02, 0x03],
                              [0x03, 0x01, 0x01, 0x02]];
-
-    for c in 0..4 {
-        for r in 0..4 {
-            state[r][c] = new_state[r][c] ^ prod(mat[r][c], state[r][c]);
+    
+    for i in 0..4 {
+        let c: [u8; 4] = [state_copy[0][i], state_copy[1][i], state_copy[2][i], state_copy[3][i]];
+        for j in 0..4 {
+            state[j][i] = dot(mat[j], c); 
         }
     }
 }
 
-fn main() {
-    let mut state: [[u8; 4]; 4] = [[0x34, 0xc1, 0xaa, 0xbb],
-                                    [0x12, 0x21, 0xff, 0x02],
-                                    [0xe1, 0xcd, 0xab, 0x99],
-                                    [0x80, 0x5a, 0x6b, 0x9f]];
-
-    let b1: u8 = 0x88;
-    let b2: u8 = 0x11;
-    println!("{:x}", prod(b2, b1));
-    /*
-    shift_rows(&mut state);
-    for row in state {
-        println!("{:x?}", row);
+// FAILING -- index out of bounds and diverging from worked example //
+fn key_expansion(key: [u8; 4*Nk as usize]) -> Vec<[u8; 4]> {
+    let mut Nr: u32 = 10;
+    if Nk == 4 {
+        Nr = 10;
+    } else if Nk == 6 {
+        Nr = 12;
+    } else if Nk == 8 {
+        Nr = 14;
     }
-    */
+
+    let mut exp_key: Vec<[u8; 4]> = Vec::new();
+    for i in 0..Nk {
+        exp_key.push([key[4*i as usize], key[(4*i+1) as usize], key[(4*i+2) as usize], key[(4*i+3) as usize]]);
+    }
+
+    let mut temp: [u8; 4];
+    for i in Nk..(4*Nr+4) {
+        temp = [exp_key[(i-1) as usize][0], exp_key[(i-1) as usize][1], exp_key[(i-1) as usize][2], exp_key[(i-1) as usize][3]];
+        println!("{:x?}", temp);
+        if i % Nk == 0 {
+            temp[0] = sub_word(rot_word(temp))[0] ^ RCON[(i/Nk) as usize][0];
+            temp[1] = sub_word(rot_word(temp))[1] ^ RCON[(i/Nk) as usize][1];
+            temp[2] = sub_word(rot_word(temp))[2] ^ RCON[(i/Nk) as usize][2];
+            temp[3] = sub_word(rot_word(temp))[3] ^ RCON[(i/Nk) as usize][3];
+        } else if Nk > 6 && i % Nk == 4 {
+            temp = sub_word(temp);
+        }
+        let new_w: [u8; 4] = [exp_key[(i-Nk) as usize][0]^temp[0], exp_key[(i-Nk) as usize][1]^temp[1], 
+                              exp_key[(i-Nk) as usize][2]^temp[2], exp_key[(i-Nk) as usize][3]^temp[3]];
+        exp_key.push(new_w);
+    }
+    return exp_key;
+} 
+
+fn main() {
+    let key128: [u8; 16] = [0x2b,0x7e,0x15,0x16,0x28,0xae,0xd2,0xa6,0xab,0xf7,0x15,0x88,0x09,0xcf,0x4f,0x3c];
+    
+    let key192: [u8; 24] = [0x8e,0x73,0xb0,0xf7,0xda,0x0e,0x64,0x52,0xc8,0x10,0xf3,0x2b,
+                            0x80,0x90,0x79,0xe5,0x62,0xf8,0xea,0xd2,0x52,0x2c,0x6b,0x7b];
+
+    let key256: [u8; 32] = [0x60,0x3d,0xeb,0x10,0x15,0xca,0x71,0xbe,0x2b,0x73,0xae,0xf0,0x85,0x7d,0x77,0x81,
+                            0x1f,0x35,0x2c,0x07,0x3b,0x61,0x08,0xd7,0x2d,0x98,0x10,0xa3,0x09,0x14,0xdf,0xf4];
+    
+    let mut state: [[u8; 4]; 4] = [[0x32, 0x88, 0x31, 0xe0],
+                                   [0x43, 0x5a, 0x31, 0x37],
+                                   [0xf6, 0x30, 0x98, 0x07],
+                                   [0xa8, 0x8d, 0xa2, 0x34]];
+    
+    
+    key_expansion(key128);
 }
