@@ -250,7 +250,7 @@ const RCON: [[u8; 4]; 10] = [[0x01,0x00,0x00,0x00],[0x02,0x00,0x00,0x00],[0x04,0
 static mut GLOBAL_PRODUCT_CACHE: [[u8; 256]; 256] = [[0_u8; 256]; 256];
 
 // Key length = 32 * Nk
-const Nk: u32 = 4;
+const Nk: u32 = 8;
 
 // Blocksize -- always 128
 const Nb: u32 = 128;
@@ -306,12 +306,19 @@ fn prod(b1: u8, b2: u8) -> u8 {
     }
 }
 
-fn rot_word(w: [u8; 4]) -> [u8; 4] {
-    return [w[1], w[2], w[3], w[0]];
+fn rot_word(w: u32) -> u32 {
+    let bytes: [u8; 4] = w.to_be_bytes();
+    return u32::from_be_bytes([bytes[1], bytes[2], bytes[3], bytes[0]]);
 }
 
-fn sub_word(w: [u8; 4]) -> [u8; 4] {
-    return [SBOX[w[0] as usize], SBOX[w[1] as usize], SBOX[w[2] as usize], SBOX[w[3] as usize]];
+fn sub_word(w: u32) -> u32 {
+    let bytes: [u8; 4] = w.to_be_bytes();
+    let mut sub_bytes: [u8; 4] = [0_u8; 4];
+
+    for i in 0..4 {
+        sub_bytes[i] = SBOX[bytes[i] as usize];
+    }
+    return u32::from_be_bytes(sub_bytes);
 }
 
 // Tested
@@ -351,8 +358,8 @@ fn mix_columns(state: &mut [[u8; 4]; 4]) {
     }
 }
 
-// FAILING -- index out of bounds and diverging from worked example //
-fn key_expansion(key: [u8; 4*Nk as usize]) -> Vec<[u8; 4]> {
+// Tested (128, 192, 256)
+fn key_expansion(key: [u8; 4*Nk as usize]) -> Vec<u32> {
     let mut Nr: u32 = 10;
     if Nk == 4 {
         Nr = 10;
@@ -362,28 +369,30 @@ fn key_expansion(key: [u8; 4*Nk as usize]) -> Vec<[u8; 4]> {
         Nr = 14;
     }
 
-    let mut exp_key: Vec<[u8; 4]> = Vec::new();
-    for i in 0..Nk {
-        exp_key.push([key[4*i as usize], key[(4*i+1) as usize], key[(4*i+2) as usize], key[(4*i+3) as usize]]);
+    let mut i: u32 = 0;
+    let mut key_word: u32;
+    let mut w: Vec<u32> = Vec::new();
+    while i <= Nk-1 {
+        key_word = u32::from_be_bytes([key[(4*i) as usize], key[(4*i+1) as usize],
+                                       key[(4*i+2) as usize], key[(4*i+3) as usize]]);
+        w.push(key_word);
+        i += 1;
     }
 
-    let mut temp: [u8; 4];
-    for i in Nk..(4*Nr+4) {
-        temp = [exp_key[(i-1) as usize][0], exp_key[(i-1) as usize][1], exp_key[(i-1) as usize][2], exp_key[(i-1) as usize][3]];
-        println!("{:x?}", temp);
+    let mut temp: u32 = 0;
+    let Rcon: [u32; 10] = [0x01000000,0x02000000,0x04000000,0x08000000,0x10000000,
+                           0x20000000,0x40000000,0x80000000,0x1b000000,0x36000000];
+    while i <= 4*Nr+3 {
+        temp = w[(i-1) as usize];
         if i % Nk == 0 {
-            temp[0] = sub_word(rot_word(temp))[0] ^ RCON[(i/Nk) as usize][0];
-            temp[1] = sub_word(rot_word(temp))[1] ^ RCON[(i/Nk) as usize][1];
-            temp[2] = sub_word(rot_word(temp))[2] ^ RCON[(i/Nk) as usize][2];
-            temp[3] = sub_word(rot_word(temp))[3] ^ RCON[(i/Nk) as usize][3];
+            temp = sub_word(rot_word(temp)) ^ Rcon[(i/Nk-1) as usize];
         } else if Nk > 6 && i % Nk == 4 {
             temp = sub_word(temp);
         }
-        let new_w: [u8; 4] = [exp_key[(i-Nk) as usize][0]^temp[0], exp_key[(i-Nk) as usize][1]^temp[1], 
-                              exp_key[(i-Nk) as usize][2]^temp[2], exp_key[(i-Nk) as usize][3]^temp[3]];
-        exp_key.push(new_w);
+        w.push(w[(i-Nk) as usize]^temp);
+        i += 1;
     }
-    return exp_key;
+    return w;
 } 
 
 fn main() {
@@ -401,5 +410,5 @@ fn main() {
                                    [0xa8, 0x8d, 0xa2, 0x34]];
     
     
-    key_expansion(key128);
+    key_expansion(key256);
 }
