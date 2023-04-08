@@ -251,10 +251,10 @@ const RCON: [u32; 10] = [0x01000000,0x02000000,0x04000000,0x08000000,0x10000000,
 static mut GLOBAL_PRODUCT_CACHE: [[u8; 256]; 256] = [[0_u8; 256]; 256];
 
 // Key length = 32 * Nk
-const Nk: u32 = 8;
+const Nk: u32 = 4;
 
 // Blocksize -- always 128
-const Nb: u32 = 128;
+const Nb: u32 = 4;
 
 
 fn bin_to_byte(bin:  [u8; 8]) -> u8 {
@@ -399,7 +399,7 @@ fn key_expansion(key: [u8; 4*Nk as usize]) -> Vec<u32> {
         i += 1;
     }
 
-    let mut temp: u32 = 0;
+    let mut temp: u32;
     while i <= 4*Nr+3 {
         temp = w[(i-1) as usize];
         if i % Nk == 0 {
@@ -411,6 +411,37 @@ fn key_expansion(key: [u8; 4*Nk as usize]) -> Vec<u32> {
         i += 1;
     }
     return w;
+}
+
+fn cipher(state: &mut [[u8; 4]; 4], w: Vec<u32>) {
+    let mut Nr: u32 = 10;
+    if Nk == 4 {
+        Nr = 10;
+    } else if Nk == 6 {
+        Nr = 12;
+    } else if Nk == 8 {
+        Nr = 14;
+    }
+    
+    let mut round_key: [u32; 4] = [w[0], w[1], w[2], w[3]];
+    add_roundkey(state, round_key);
+    for i in 1..Nr {
+        sub_bytes(state);
+        shift_rows(state);
+        mix_columns(state);
+        
+        round_key = [w[(4*i) as usize], w[(4*i+1) as usize], 
+                     w[(4*i+2) as usize], w[(4*i+3) as usize]];
+
+        add_roundkey(state, round_key);
+    }
+    sub_bytes(state);
+    shift_rows(state);
+
+    round_key = [w[(4*Nr) as usize], w[(4*Nr+1) as usize], 
+                 w[(4*Nr+2) as usize], w[(4*Nr+3) as usize]];
+    
+    add_roundkey(state, round_key);
 }
 
 fn main() {
@@ -427,4 +458,7 @@ fn main() {
                                    [0xf6, 0x30, 0x98, 0x07],
                                    [0xa8, 0x8d, 0xa2, 0x34]];
     
+    let exp_key: Vec<u32> = key_expansion(key128);
+    cipher(&mut state, exp_key);
+    println!("{:x?}", state);
 }
