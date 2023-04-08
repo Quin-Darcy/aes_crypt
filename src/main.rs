@@ -355,6 +355,7 @@ fn mix_columns(state: &mut [[u8; 4]; 4]) {
     }
 }
 
+// Tested
 fn add_roundkey(state: &mut [[u8; 4]; 4], round_keys: [u32; 4]) {
     let mut col_0: u32 = u32::from_be_bytes([state[0][0], state[1][0], state[2][0], state[3][0]]);
     let mut col_1: u32 = u32::from_be_bytes([state[0][1], state[1][1], state[2][1], state[3][1]]);
@@ -426,6 +427,4 @@ fn main() {
                                    [0xf6, 0x30, 0x98, 0x07],
                                    [0xa8, 0x8d, 0xa2, 0x34]];
     
-    
-    key_expansion(key256);
 }
