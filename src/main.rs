@@ -243,8 +243,9 @@ const SBOX: [u8; 256] = [0x63,0x7c,0x77,0x7b,0xf2,0x6b,0x6f,0xc5,0x30,0x01,0x67,
                          0xe1,0xf8,0x98,0x11,0x69,0xd9,0x8e,0x94,0x9b,0x1e,0x87,0xe9,0xce,0x55,0x28,0xdf,
                          0x8c,0xa1,0x89,0x0d,0xbf,0xe6,0x42,0x68,0x41,0x99,0x2d,0x0f,0xb0,0x54,0xbb,0x16];
 
-const RCON: [[u8; 4]; 10] = [[0x01,0x00,0x00,0x00],[0x02,0x00,0x00,0x00],[0x04,0x00,0x00,0x00],[0x08,0x00,0x00,0x00],[0x10,0x00,0x00,0x00],
-                             [0x20,0x00,0x00,0x00],[0x40,0x00,0x00,0x00],[0x80,0x00,0x00,0x00],[0x1b,0x00,0x00,0x00],[0x36,0x00,0x00,0x00]];
+// Round constants
+const RCON: [u32; 10] = [0x01000000,0x02000000,0x04000000,0x08000000,0x10000000,
+                           0x20000000,0x40000000,0x80000000,0x1b000000,0x36000000];
 
 // Cache which fills during runtime containing all products taken throughout runtime
 static mut GLOBAL_PRODUCT_CACHE: [[u8; 256]; 256] = [[0_u8; 256]; 256];
@@ -254,6 +255,7 @@ const Nk: u32 = 8;
 
 // Blocksize -- always 128
 const Nb: u32 = 128;
+
 
 fn bin_to_byte(bin:  [u8; 8]) -> u8 {
     let mut dec: u8 = 0;
@@ -266,13 +268,6 @@ fn bin_to_byte(bin:  [u8; 8]) -> u8 {
 
 // Tested and optimized with GPT
 fn dot(w1: [u8; 4], w2: [u8; 4]) -> u8 {
-    /*
-    let mut dp: u8 = 0;
-    for i in 0..4 {
-        dp = dp ^ prod(w1[i], w2[i]);
-    }
-    return dp;
-    */
     w1.iter().zip(w2.iter()).fold(0, |acc, (&a, &b)| acc ^ prod(a, b))
 }
 
@@ -306,11 +301,13 @@ fn prod(b1: u8, b2: u8) -> u8 {
     }
 }
 
+// Tested
 fn rot_word(w: u32) -> u32 {
     let bytes: [u8; 4] = w.to_be_bytes();
     return u32::from_be_bytes([bytes[1], bytes[2], bytes[3], bytes[0]]);
 }
 
+// Tested
 fn sub_word(w: u32) -> u32 {
     let bytes: [u8; 4] = w.to_be_bytes();
     let mut sub_bytes: [u8; 4] = [0_u8; 4];
@@ -358,6 +355,28 @@ fn mix_columns(state: &mut [[u8; 4]; 4]) {
     }
 }
 
+fn add_roundkey(state: &mut [[u8; 4]; 4], round_keys: [u32; 4]) {
+    let mut col_0: u32 = u32::from_be_bytes([state[0][0], state[1][0], state[2][0], state[3][0]]);
+    let mut col_1: u32 = u32::from_be_bytes([state[0][1], state[1][1], state[2][1], state[3][1]]);
+    let mut col_2: u32 = u32::from_be_bytes([state[0][2], state[1][2], state[2][2], state[3][2]]);
+    let mut col_3: u32 = u32::from_be_bytes([state[0][3], state[1][3], state[2][3], state[3][3]]);
+
+    col_0 = col_0 ^ round_keys[0];
+    col_1 = col_1 ^ round_keys[1];
+    col_2 = col_2 ^ round_keys[2];
+    col_3 = col_3 ^ round_keys[3];
+
+    let bytes_0: [u8; 4] = col_0.to_be_bytes();
+    let bytes_1: [u8; 4] = col_1.to_be_bytes();
+    let bytes_2: [u8; 4] = col_2.to_be_bytes();
+    let bytes_3: [u8; 4] = col_3.to_be_bytes();
+
+    *state = [[bytes_0[0], bytes_1[0], bytes_2[0], bytes_3[0]],
+              [bytes_0[1], bytes_1[1], bytes_2[1], bytes_3[1]],
+              [bytes_0[2], bytes_1[2], bytes_2[2], bytes_3[2]],
+              [bytes_0[3], bytes_1[3], bytes_2[3], bytes_3[3]]];
+}
+
 // Tested (128, 192, 256)
 fn key_expansion(key: [u8; 4*Nk as usize]) -> Vec<u32> {
     let mut Nr: u32 = 10;
@@ -380,12 +399,10 @@ fn key_expansion(key: [u8; 4*Nk as usize]) -> Vec<u32> {
     }
 
     let mut temp: u32 = 0;
-    let Rcon: [u32; 10] = [0x01000000,0x02000000,0x04000000,0x08000000,0x10000000,
-                           0x20000000,0x40000000,0x80000000,0x1b000000,0x36000000];
     while i <= 4*Nr+3 {
         temp = w[(i-1) as usize];
         if i % Nk == 0 {
-            temp = sub_word(rot_word(temp)) ^ Rcon[(i/Nk-1) as usize];
+            temp = sub_word(rot_word(temp)) ^ RCON[(i/Nk-1) as usize];
         } else if Nk > 6 && i % Nk == 4 {
             temp = sub_word(temp);
         }
@@ -393,7 +410,7 @@ fn key_expansion(key: [u8; 4*Nk as usize]) -> Vec<u32> {
         i += 1;
     }
     return w;
-} 
+}
 
 fn main() {
     let key128: [u8; 16] = [0x2b,0x7e,0x15,0x16,0x28,0xae,0xd2,0xa6,0xab,0xf7,0x15,0x88,0x09,0xcf,0x4f,0x3c];
