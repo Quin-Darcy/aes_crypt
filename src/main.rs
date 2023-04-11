@@ -340,6 +340,18 @@ fn shift_rows(state: &mut [[u8; 4]; 4]) {
 }
 
 // Tested
+fn inv_shift_rows(state: &mut [[u8; 4]; 4]) {
+    let mut new_state: [[u8; 4]; 4] = [[0_u8; 4]; 4];
+
+    for i in 0..4 {
+        for j in 0..4 { 
+            new_state[i][j] = state[i][(j+i*3)%4];
+        }
+    }
+    *state = new_state;
+}
+
+// Tested
 fn mix_columns(state: &mut [[u8; 4]; 4]) {
     let state_copy: [[u8; 4]; 4] = (*state).clone();
     let mat: [[u8; 4]; 4] = [[0x02, 0x03, 0x01, 0x01],
@@ -458,7 +470,9 @@ fn main() {
                                    [0xf6, 0x30, 0x98, 0x07],
                                    [0xa8, 0x8d, 0xa2, 0x34]];
     
-    let exp_key: Vec<u32> = key_expansion(key128);
-    cipher(&mut state, exp_key);
+    println!("{:x?}", state);
+    shift_rows(&mut state);
+    println!("{:x?}", state);
+    inv_shift_rows(&mut state);
     println!("{:x?}", state);
 }
