@@ -623,6 +623,21 @@ pub fn encrypt(src_file_path: &str, dst_file_path: &str, key_path: &str) {
     data.to_file(dst_file_path);
 }
 
+pub fn decrypt(src_file_path: &str, dst_file_path: &str, key_path: &str) {
+    let mut key: [u8; (4*Nk) as usize] = [0_u8; (4*Nk) as usize];
+    let key_vec: Vec<u8> = fs::read(key_path).expect("Could not read from file");
+    for i in 0..(4*Nk as usize) {
+        key[i] = key_vec[i];
+    }
+
+    let key_schedule: Vec<u32> = key_expansion(key);
+    let mut data: Data = Data::from_path(file_path);
+    for i in 0..data.states.len() {
+        inv_cipher(&mut data.states[i], key_schedule);
+    }
+    data.to_file(dfile_path);
+}
+
 // NOTE: test_key_expansion() and test_ciphers() can only be tested if Nk == 8
 //       These tests were run and passed at the time of this writing for 
 //       Nk == 6 and Nk == 4, but due to Nk being global and several functions'
