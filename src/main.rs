@@ -473,6 +473,7 @@ fn key_expansion(key: [u8; 4*Nk as usize]) -> Vec<u32> {
     return w;
 }
 
+// Tested
 fn cipher(state: &mut [[u8; 4]; 4], w: Vec<u32>) {
     let mut Nr: u32 = 10;
     if Nk == 4 {
@@ -504,6 +505,36 @@ fn cipher(state: &mut [[u8; 4]; 4], w: Vec<u32>) {
     add_roundkey(state, round_key);
 }
 
+// Tested
+fn inv_cipher(state: &mut [[u8; 4]; 4], w: Vec<u32>) {
+    let mut Nr: u32 = 10;
+    if Nk == 4 {
+        Nr = 10;
+    } else if Nk == 6 {
+        Nr = 12;
+    } else if Nk == 8 {
+        Nr = 14;
+    }
+
+    let mut round_key: [u32; 4] = [w[(4*Nr) as usize], w[(4*Nr+1) as usize], 
+                                   w[(4*Nr+2) as usize], w[(4*Nr+3) as usize]];
+    add_roundkey(state, round_key);
+    for i in (1..Nr).rev() {
+        inv_shift_rows(state);
+        inv_sub_bytes(state);
+        
+        round_key = [w[(4*i) as usize], w[(4*i+1) as usize], 
+                     w[(4*i+2) as usize], w[(4*i+3) as usize]];
+
+        add_roundkey(state, round_key);
+        inv_mix_columns(state);
+    }
+    inv_shift_rows(state);
+    inv_sub_bytes(state);
+    round_key = [w[0], w[1], w[2], w[3]];
+    add_roundkey(state, round_key);
+}
+
 fn main() {
     let key128: [u8; 16] = [0x2b,0x7e,0x15,0x16,0x28,0xae,0xd2,0xa6,0xab,0xf7,0x15,0x88,0x09,0xcf,0x4f,0x3c];
     
@@ -517,10 +548,12 @@ fn main() {
                                    [0x43, 0x5a, 0x31, 0x37],
                                    [0xf6, 0x30, 0x98, 0x07],
                                    [0xa8, 0x8d, 0xa2, 0x34]];
-     
+    
+    let exp_key: Vec<u32> = key_expansion(key128);
+
     println!("{:x?}", state);
-    mix_columns(&mut state);
+    cipher(&mut state, exp_key.clone());
     println!("{:x?}", state);
-    inv_mix_columns(&mut state);
+    inv_cipher(&mut state, exp_key.clone());
     println!("{:x?}", state);
 }
