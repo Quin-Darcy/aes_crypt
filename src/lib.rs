@@ -4,6 +4,12 @@
 #![allow(non_upper_case_globals)]
 #![allow(non_snake_case)]
 
+use std::fs;
+use rand::Rng;
+use std::fs::File;
+use std::io::Write;
+
+
 const BINS: [[u8; 8]; 256] = [[0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,1],[0,0,0,0,0,0,1,0],[0,0,0,0,0,0,1,1],
                                 [0,0,0,0,0,1,0,0],[0,0,0,0,0,1,0,1],[0,0,0,0,0,1,1,0],[0,0,0,0,0,1,1,1],
                                 [0,0,0,0,1,0,0,0],[0,0,0,0,1,0,0,1],[0,0,0,0,1,0,1,0],[0,0,0,0,1,0,1,1],
@@ -273,10 +279,91 @@ static mut GLOBAL_PRODUCT_CACHE: [[u8; 256]; 256] = [[0_u8; 256]; 256];
 // Key length = 32 * Nk
 const Nk: u32 = 8;
 
-// Blocksize -- always 128
-const Nb: u32 = 4;
+// Bytes per block
+const BPB: usize = 16;
 
 
+// Structure for file handling and converting to byte states
+#[derive(Debug)]
+pub struct Data {
+    bytes: Vec<u8>,
+    blocks: Vec<[u8; BPB]>,
+    states: Vec<[[u8; 4]; 4]>
+}
+
+impl Data {
+    pub fn new() -> Self {
+        Data {
+            bytes: Vec::new(),
+            blocks: Vec::new(),
+            states: Vec::new(),
+        }
+    }
+
+    pub fn from_path(path: &str) -> Self {
+        let mut bytes: Vec<u8> = fs::read(path).expect("Could not read from file");
+        let pad_len: usize = lcm(bytes.len(), BPB) - bytes.len();
+        bytes.extend(vec![0_u8; pad_len]);
+
+        let mut tmp_block = [0_u8; BPB];
+        let mut blocks: Vec<[u8; BPB]> = Vec::new();
+        let num_blocks: usize = bytes.len() / BPB;
+        for i in 0..num_blocks {
+            for j in 0..BPB { 
+                tmp_block[j] = bytes[BPB*i+j]; 
+            }
+            blocks.push(tmp_block);
+        }
+
+        let mut tmp_col = [0_u8; 4];
+        let mut byte_mtrx: [[u8; 4]; 4] = [[0_u8; 4]; 4];
+        let mut states: Vec<[[u8; 4]; 4]> = Vec::new();
+        for i in 0..num_blocks {
+            for j in 0..4 {
+                for k in 0..4 {
+                    tmp_col[k] = blocks[i][4*j+k];
+                }
+                byte_mtrx[j] = tmp_col;
+            }
+            states.push(byte_mtrx);
+        }
+
+        Data {
+            bytes: bytes,
+            blocks: blocks,
+            states: states,
+        }
+    }
+
+    pub fn to_file(&mut self, path: &str) {
+        let mut bytes: Vec<u8> = Vec::new();
+        for byte_mtrx in &self.states {
+            for c in 0..4 {
+                for r in 0..4 {
+                    bytes.push(byte_mtrx[c][r]);
+                }
+            }
+        }
+
+        let mut buffer = match File::create(path) {
+            Ok(b) => b,
+            Err(_e) => panic!("Error. Could not create file {}", path),                    
+        };
+        buffer.write_all(&bytes[..]).unwrap();  
+    }
+}
+
+fn gcd(a: usize, b: usize) -> usize {
+    if b == 0 {
+        return a;
+    } else {
+        return gcd(b, a%b);
+    }    
+}
+
+fn lcm(a: usize, b: usize) -> usize {
+    (a / gcd(a, b)) * b        
+}
 
 fn dot(w1: [u8; 4], w2: [u8; 4]) -> u8 {
     w1.iter().zip(w2.iter()).fold(0, |acc, (&a, &b)| acc ^ prod(a, b))
@@ -452,7 +539,7 @@ fn key_expansion(key: [u8; 4*Nk as usize]) -> Vec<u32> {
     return w;
 }
 
-fn cipher(state: &mut [[u8; 4]; 4], w: Vec<u32>) {
+fn cipher(state: &mut [[u8; 4]; 4], w: &Vec<u32>) {
     let mut Nr: u32 = 10;
     if Nk == 4 {
         Nr = 10;
@@ -483,7 +570,7 @@ fn cipher(state: &mut [[u8; 4]; 4], w: Vec<u32>) {
     add_roundkey(state, round_key);
 }
 
-fn inv_cipher(state: &mut [[u8; 4]; 4], w: Vec<u32>) {
+fn inv_cipher(state: &mut [[u8; 4]; 4], w: &Vec<u32>) {
     let mut Nr: u32 = 10;
     if Nk == 4 {
         Nr = 10;
@@ -512,6 +599,29 @@ fn inv_cipher(state: &mut [[u8; 4]; 4], w: Vec<u32>) {
     add_roundkey(state, round_key);
 }
 
+pub fn gen_key(key_path: &str) {
+    let key: [u8; (4*Nk) as usize] = rand::thread_rng().gen::<[u8; (4*Nk) as usize]>();
+    let mut buffer = match File::create(key_path) {
+        Ok(b) => b,
+        Err(_e) => panic!("Error. Could not create file {}", key_path),                    
+    };
+    buffer.write_all(&key).unwrap();
+}
+
+pub fn encrypt(src_file_path: &str, dst_file_path: &str, key_path: &str) {
+    let mut key: [u8; (4*Nk) as usize] = [0_u8; (4*Nk) as usize];
+    let key_vec: Vec<u8> = fs::read(key_path).expect("Could not read from file");
+    for i in 0..(4*Nk as usize) {
+        key[i] = key_vec[i];
+    }
+
+    let key_schedule: Vec<u32> = key_expansion(key);
+    let mut data: Data = Data::from_path(src_file_path);
+    for i in 0..data.states.len() {
+        cipher(&mut data.states[i], &key_schedule);
+    }
+    data.to_file(dst_file_path);
+}
 
 // NOTE: test_key_expansion() and test_ciphers() can only be tested if Nk == 8
 //       These tests were run and passed at the time of this writing for 
