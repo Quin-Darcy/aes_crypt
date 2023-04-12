@@ -631,11 +631,11 @@ pub fn decrypt(src_file_path: &str, dst_file_path: &str, key_path: &str) {
     }
 
     let key_schedule: Vec<u32> = key_expansion(key);
-    let mut data: Data = Data::from_path(file_path);
+    let mut data: Data = Data::from_path(src_file_path);
     for i in 0..data.states.len() {
         inv_cipher(&mut data.states[i], key_schedule);
     }
-    data.to_file(dfile_path);
+    data.to_file(dst_file_path);
 }
 
 // NOTE: test_key_expansion() and test_ciphers() can only be tested if Nk == 8
