@@ -277,6 +277,7 @@ const Nk: u32 = 4;
 const Nb: u32 = 4;
 
 
+// Tested
 fn bin_to_byte(bin:  [u8; 8]) -> u8 {
     let mut dec: u8 = 0;
 
@@ -286,7 +287,7 @@ fn bin_to_byte(bin:  [u8; 8]) -> u8 {
     dec
 }
 
-// Tested and optimized with GPT
+// Tested
 fn dot(w1: [u8; 4], w2: [u8; 4]) -> u8 {
     w1.iter().zip(w2.iter()).fold(0, |acc, (&a, &b)| acc ^ prod(a, b))
 }
@@ -388,10 +389,28 @@ fn mix_columns(state: &mut [[u8; 4]; 4]) {
                              [0x01, 0x01, 0x02, 0x03],
                              [0x03, 0x01, 0x01, 0x02]];
     
+    let mut c: [u8; 4];
     for i in 0..4 {
-        let c: [u8; 4] = [state_copy[0][i], state_copy[1][i], state_copy[2][i], state_copy[3][i]];
+        c = [state_copy[0][i], state_copy[1][i], state_copy[2][i], state_copy[3][i]];
         for j in 0..4 {
             state[j][i] = dot(mat[j], c); 
+        }
+    }
+}
+
+// Tested
+fn inv_mix_columns(state: &mut [[u8; 4]; 4]) {
+    let state_copy: [[u8; 4]; 4] = (*state).clone();
+    let mat: [[u8; 4]; 4] = [[0x0e, 0x0b, 0x0d, 0x09],
+                              [0x09, 0x0e, 0x0b, 0x0d],
+                              [0x0d, 0x09, 0x0e, 0x0b],
+                              [0x0b, 0x0d, 0x09, 0x0e]];
+
+    let mut c: [u8; 4];
+    for i in 0..4 {
+        c = [state_copy[0][i], state_copy[1][i], state_copy[2][i], state_copy[3][i]];
+        for j in 0..4{
+            state[j][i] = dot(mat[j], c);
         }
     }
 }
@@ -500,8 +519,8 @@ fn main() {
                                    [0xa8, 0x8d, 0xa2, 0x34]];
      
     println!("{:x?}", state);
-    sub_bytes(&mut state);
+    mix_columns(&mut state);
     println!("{:x?}", state);
-    inv_sub_bytes(&mut state);
+    inv_mix_columns(&mut state);
     println!("{:x?}", state);
 }
