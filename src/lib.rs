@@ -302,8 +302,8 @@ impl Data {
 
     pub fn from_path(path: &str) -> Self {
         let mut bytes: Vec<u8> = fs::read(path).expect("Could not read from file");
-        let pad_len: usize = lcm(bytes.len(), BPB) - bytes.len();
-        bytes.extend(vec![0_u8; pad_len]);
+        let padding_len: usize = lcm(bytes.len(), BPB) - bytes.len();
+        bytes.extend(vec![0_u8; padding_len]);
 
         let mut tmp_block = [0_u8; BPB];
         let mut blocks: Vec<[u8; BPB]> = Vec::new();
@@ -315,17 +315,17 @@ impl Data {
             blocks.push(tmp_block);
         }
 
-        let mut tmp_col = [0_u8; 4];
-        let mut byte_mtrx: [[u8; 4]; 4] = [[0_u8; 4]; 4];
+        let mut tmp_column = [0_u8; 4];
+        let mut byte_matrix: [[u8; 4]; 4] = [[0_u8; 4]; 4];
         let mut states: Vec<[[u8; 4]; 4]> = Vec::new();
         for i in 0..num_blocks {
             for j in 0..4 {
                 for k in 0..4 {
-                    tmp_col[k] = blocks[i][4*j+k];
+                    tmp_column[k] = blocks[i][4*j+k];
                 }
-                byte_mtrx[j] = tmp_col;
+                byte_matrix[j] = tmp_column;
             }
-            states.push(byte_mtrx);
+            states.push(byte_matrix);
         }
 
         Data {
@@ -337,10 +337,10 @@ impl Data {
 
     pub fn to_file(&mut self, path: &str) {
         let mut bytes: Vec<u8> = Vec::new();
-        for byte_mtrx in &self.states {
+        for byte_matrix in &self.states {
             for c in 0..4 {
                 for r in 0..4 {
-                    bytes.push(byte_mtrx[c][r]);
+                    bytes.push(byte_matrix[c][r]);
                 }
             }
         }
@@ -483,16 +483,16 @@ fn inv_mix_columns(state: &mut [[u8; 4]; 4]) {
     }
 }
 
-fn add_roundkey(state: &mut [[u8; 4]; 4], round_keys: [u32; 4]) {
+fn add_roundkey(state: &mut [[u8; 4]; 4], roundkeys: [u32; 4]) {
     let mut col_0: u32 = u32::from_be_bytes([state[0][0], state[1][0], state[2][0], state[3][0]]);
     let mut col_1: u32 = u32::from_be_bytes([state[0][1], state[1][1], state[2][1], state[3][1]]);
     let mut col_2: u32 = u32::from_be_bytes([state[0][2], state[1][2], state[2][2], state[3][2]]);
     let mut col_3: u32 = u32::from_be_bytes([state[0][3], state[1][3], state[2][3], state[3][3]]);
 
-    col_0 = col_0 ^ round_keys[0];
-    col_1 = col_1 ^ round_keys[1];
-    col_2 = col_2 ^ round_keys[2];
-    col_3 = col_3 ^ round_keys[3];
+    col_0 = col_0 ^ roundkeys[0];
+    col_1 = col_1 ^ roundkeys[1];
+    col_2 = col_2 ^ roundkeys[2];
+    col_3 = col_3 ^ roundkeys[3];
 
     let bytes_0: [u8; 4] = col_0.to_be_bytes();
     let bytes_1: [u8; 4] = col_1.to_be_bytes();
@@ -549,25 +549,25 @@ fn cipher(state: &mut [[u8; 4]; 4], w: &Vec<u32>) {
         Nr = 14;
     }
     
-    let mut round_key: [u32; 4] = [w[0], w[1], w[2], w[3]];
-    add_roundkey(state, round_key);
+    let mut roundkey: [u32; 4] = [w[0], w[1], w[2], w[3]];
+    add_roundkey(state, roundkey);
     for i in 1..Nr {
         sub_bytes(state);
         shift_rows(state);
         mix_columns(state);
         
-        round_key = [w[(4*i) as usize], w[(4*i+1) as usize], 
+        roundkey = [w[(4*i) as usize], w[(4*i+1) as usize], 
                      w[(4*i+2) as usize], w[(4*i+3) as usize]];
 
-        add_roundkey(state, round_key);
+        add_roundkey(state, roundkey);
     }
     sub_bytes(state);
     shift_rows(state);
 
-    round_key = [w[(4*Nr) as usize], w[(4*Nr+1) as usize], 
+    roundkey = [w[(4*Nr) as usize], w[(4*Nr+1) as usize], 
                  w[(4*Nr+2) as usize], w[(4*Nr+3) as usize]];
     
-    add_roundkey(state, round_key);
+    add_roundkey(state, roundkey);
 }
 
 fn inv_cipher(state: &mut [[u8; 4]; 4], w: &Vec<u32>) {
@@ -580,23 +580,23 @@ fn inv_cipher(state: &mut [[u8; 4]; 4], w: &Vec<u32>) {
         Nr = 14;
     }
 
-    let mut round_key: [u32; 4] = [w[(4*Nr) as usize], w[(4*Nr+1) as usize], 
+    let mut roundkey: [u32; 4] = [w[(4*Nr) as usize], w[(4*Nr+1) as usize], 
                                    w[(4*Nr+2) as usize], w[(4*Nr+3) as usize]];
-    add_roundkey(state, round_key);
+    add_roundkey(state, roundkey);
     for i in (1..Nr).rev() {
         inv_shift_rows(state);
         inv_sub_bytes(state);
         
-        round_key = [w[(4*i) as usize], w[(4*i+1) as usize], 
+        roundkey = [w[(4*i) as usize], w[(4*i+1) as usize], 
                      w[(4*i+2) as usize], w[(4*i+3) as usize]];
 
-        add_roundkey(state, round_key);
+        add_roundkey(state, roundkey);
         inv_mix_columns(state);
     }
     inv_shift_rows(state);
     inv_sub_bytes(state);
-    round_key = [w[0], w[1], w[2], w[3]];
-    add_roundkey(state, round_key);
+    roundkey = [w[0], w[1], w[2], w[3]];
+    add_roundkey(state, roundkey);
 }
 
 pub fn gen_key(key_path: &str) {
@@ -681,8 +681,8 @@ mod tests {
         let pre_state: [[u8; 4]; 4] = post_state.clone();
         let exp_key: Vec<u32> = key_expansion(key256);
         
-        cipher(&mut post_state, exp_key.clone());
-        inv_cipher(&mut post_state, exp_key.clone());
+        cipher(&mut post_state, &exp_key.clone());
+        inv_cipher(&mut post_state, &exp_key.clone());
         assert_eq!(pre_state, post_state);
     }
 }
