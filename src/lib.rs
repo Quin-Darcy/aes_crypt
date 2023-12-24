@@ -287,7 +287,6 @@ const BPB: usize = 16;
 #[derive(Debug)]
 pub struct Data {
     bytes: Vec<u8>,
-    blocks: Vec<[u8; BPB]>,
     states: Vec<[[u8; 4]; 4]>
 }
 
@@ -295,19 +294,34 @@ impl Data {
     pub fn new() -> Self {
         Data {
             bytes: Vec::new(),
-            blocks: Vec::new(),
             states: Vec::new(),
         }
     }
 
-    pub fn from_path(path: &str) -> Self {
+    pub fn from_plain_text_path(path: &str) -> Self {
         let mut bytes: Vec<u8> = fs::read(path).expect("Could not read from file");
-        let padding_len: usize = lcm(bytes.len(), BPB) - bytes.len();
-        bytes.extend(vec![0_u8; padding_len]);
 
-        let mut tmp_block = [0_u8; BPB];
-        let mut blocks: Vec<[u8; BPB]> = Vec::new();
+        // Compute the amount of padding needed. The total number of bytes 
+        // needs to be a multiple of the block size, e.g., 16 bytes. We will always
+        // add padding. This means if raw_data.len() % BPB == 0, we will add BPB 
+        // bytes of padding. Thus, 1 <= padding_length <= BPB (bytes per block)
+        let mut padding_len: usize = least_multiple_greater_than(BPB, bytes.len()) - bytes.len();
+
+        if padding_len == 0 {
+            padding_len = BPB;
+        }
+
+        // Implement the PKCS#7 Padding scheme
+        assert!(padding_len <= u8::MAX as usize, "Padding Length out of range for u8");
+        let padding_byte: u8 = padding_len as u8;
+        let pad: Vec<u8> = vec![padding_byte; padding_len];
+        bytes.extend(&pad);
+
+        // Break the bytes vector into a vector of blocks
         let num_blocks: usize = bytes.len() / BPB;
+        let mut blocks: Vec<[u8; BPB]> = Vec::with_capacity(num_blocks);
+        let mut tmp_block = [0_u8; BPB];
+
         for i in 0..num_blocks {
             for j in 0..BPB { 
                 tmp_block[j] = bytes[BPB*i+j]; 
@@ -315,9 +329,12 @@ impl Data {
             blocks.push(tmp_block);
         }
 
-        let mut tmp_column = [0_u8; 4];
+        // Break the bytes vector into vector of 4x4 byte matrices (states)
+        // Each successive group of 4 bytes forms a column in the matrix
+        let mut states: Vec<[[u8; 4]; 4]> = Vec::with_capacity(num_blocks);
         let mut byte_matrix: [[u8; 4]; 4] = [[0_u8; 4]; 4];
-        let mut states: Vec<[[u8; 4]; 4]> = Vec::new();
+        let mut tmp_column = [0_u8; 4];
+
         for i in 0..num_blocks {
             for j in 0..4 {
                 for k in 0..4 {
@@ -330,12 +347,48 @@ impl Data {
 
         Data {
             bytes: bytes,
-            blocks: blocks,
             states: states,
         }
     }
 
-    pub fn to_file(&mut self, path: &str) {
+    pub fn from_cipher_text_path(path: &str) -> Self {
+        let mut bytes: Vec<u8> = fs::read(path).expect("Could not read from file");
+
+        // Break the bytes vector into a vector of blocks
+        let num_blocks: usize = bytes.len() / BPB;
+        let mut blocks: Vec<[u8; BPB]> = Vec::with_capacity(num_blocks);
+        let mut tmp_block = [0_u8; BPB];
+
+        for i in 0..num_blocks {
+            for j in 0..BPB { 
+                tmp_block[j] = bytes[BPB*i+j]; 
+            }
+            blocks.push(tmp_block);
+        }
+
+        // Break the bytes vector into vector of 4x4 byte matrices (states)
+        // Each successive group of 4 bytes forms a column in the matrix
+        let mut states: Vec<[[u8; 4]; 4]> = Vec::with_capacity(num_blocks);
+        let mut byte_matrix: [[u8; 4]; 4] = [[0_u8; 4]; 4];
+        let mut tmp_column = [0_u8; 4];
+
+        for i in 0..num_blocks {
+            for j in 0..4 {
+                for k in 0..4 {
+                    tmp_column[k] = blocks[i][4*j+k];
+                }
+                byte_matrix[j] = tmp_column;
+            }
+            states.push(byte_matrix);
+        }
+
+        Data {
+            bytes: bytes,
+            states: states,
+        }
+    }
+
+    pub fn to_encrypted_file(&mut self, path: &str) {
         let mut bytes: Vec<u8> = Vec::new();
         for byte_matrix in &self.states {
             for c in 0..4 {
@@ -345,12 +398,64 @@ impl Data {
             }
         }
 
+        if bytes.is_empty() {
+            panic!("Encrypted data is empty");
+        }
+
         let mut buffer = match File::create(path) {
             Ok(b) => b,
             Err(_e) => panic!("Error. Could not create file {}", path),                    
         };
         buffer.write_all(&bytes[..]).unwrap();  
     }
+
+    pub fn to_decrypted_file(&mut self, path: &str) {
+        let mut bytes: Vec<u8> = Vec::new();
+        for byte_matrix in &self.states {
+            for c in 0..4 {
+                for r in 0..4 {
+                    bytes.push(byte_matrix[c][r]);
+                }
+            }
+        }
+
+        if bytes.is_empty() {
+            panic!("Decrypted data is empty");
+        }
+
+        let num_bytes = bytes.len();
+
+        // Since we are using the PKCS#7 padding scheme, the last byte
+        // should represent the number of bytes added as padding
+        let padding_len: usize = bytes[num_bytes - 1] as usize;
+
+        // Verify this is a valid value, i.e., 1 <= padding_len <= BPB
+        if padding_len == 0 || padding_len > BPB {
+            println!("padding_len: {}", padding_len);
+            panic!("Invalid padding length");
+        }
+
+        if padding_len > num_bytes {
+            panic!("Padding length exceeds data length");
+        }
+
+        // Confirm that the last padding_len bytes of the bytes array are all
+        // equal to padding_len as u8.
+        let padding_byte: u8 = padding_len as u8;
+
+        if !bytes.iter().skip(num_bytes - padding_len).all(|&b| b == padding_byte) {
+            panic!("Invalid padding bytes");
+        }
+
+        // Remove the padding
+        bytes.truncate(num_bytes - padding_len);
+
+        let mut buffer = match File::create(path) {
+            Ok(b) => b,
+            Err(_e) => panic!("Error. Could not create file {}", path),                    
+        };
+        buffer.write_all(&bytes[..]).unwrap();  
+    }    
 }
 
 fn gcd(a: usize, b: usize) -> usize {
@@ -363,6 +468,19 @@ fn gcd(a: usize, b: usize) -> usize {
 
 fn lcm(a: usize, b: usize) -> usize {
     (a / gcd(a, b)) * b        
+}
+
+fn least_multiple_greater_than(blocksize: usize, num_bytes: usize) -> usize {
+    if blocksize <= 0 {
+        panic!("a must be greater than 0");
+    }
+    let quotient = num_bytes / blocksize;
+    let remainder = num_bytes % blocksize;
+    if remainder == 0 {
+        blocksize * (quotient + 1)
+    } else {
+        blocksize * (quotient + 1)
+    }
 }
 
 fn dot(w1: [u8; 4], w2: [u8; 4]) -> u8 {
@@ -616,11 +734,11 @@ pub fn encrypt(src_file_path: &str, dst_file_path: &str, key_path: &str) {
     }
 
     let key_schedule: Vec<u32> = key_expansion(key);
-    let mut data: Data = Data::from_path(src_file_path);
+    let mut data: Data = Data::from_plain_text_path(src_file_path);
     for i in 0..data.states.len() {
         cipher(&mut data.states[i], &key_schedule);
     }
-    data.to_file(dst_file_path);
+    data.to_encrypted_file(dst_file_path);
 }
 
 pub fn decrypt(src_file_path: &str, dst_file_path: &str, key_path: &str) {
@@ -631,11 +749,11 @@ pub fn decrypt(src_file_path: &str, dst_file_path: &str, key_path: &str) {
     }
 
     let key_schedule: Vec<u32> = key_expansion(key);
-    let mut data: Data = Data::from_path(src_file_path);
+    let mut data: Data = Data::from_cipher_text_path(src_file_path);
     for i in 0..data.states.len() {
         inv_cipher(&mut data.states[i], &key_schedule);
     }
-    data.to_file(dst_file_path);
+    data.to_decrypted_file(dst_file_path);
 }
 
 // NOTE: test_key_expansion() and test_ciphers() can only be tested if Nk == 8
