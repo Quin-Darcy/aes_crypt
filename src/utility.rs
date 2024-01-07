@@ -380,37 +380,34 @@ fn block_add(block1: &mut BitVec, block2: &BitVec) {
     block1.bitxor_assign(block2);
 }
 
-// This function computes the product of two 128-bit blocks in place
-fn block_mult(block1: &BitVec, block2: &BitVec) {
-    if block1.len() != 128 || block2.len() != 128 {
-        println!("[{}] Error: Invalid block sizes", "block_mult");
-        panic!();
+// This function computes the product of two 128-bit blocks
+fn block_mult(x_block: &BitVec, y_block: &BitVec) -> BitVec {
+    if x_block.len() != 128 || y_block.len() != 128 {
+        panic!("[{}] Error: Invalid block sizes", "block_mult");
     }
 
-    // Initialize fixed block
+    // This represents the irreducible polynomial modulus for GL(2^128)
     let mut r: BitVec = bitvec![1, 1, 1, 0, 0, 0, 0, 1];
     r.extend(bitvec![0; 120]);
 
-    // Convert block1 into a little-endian bitvec 
-    let mut bit_block1: BitVec = block1.clone();
-    bit_block1.reverse();
-
     // Initialize Z_0 and V_0
     let mut z: BitVec = bitvec![0; 128];
-    let mut v: BitVec = block2.clone();
+    let mut v: BitVec = y_block.clone();
 
     for i in 0..128 {
-        if bit_block1[i] {
+        if x_block[i] {
             block_add(&mut z, &v);
         }
 
-        let v_lsb = v[v.len() - 1];
-        v.shift_right(1);
-
-        if v_lsb {
+        if v[127] {
+            v.shift_right(1);
             block_add(&mut v, &r);
+        } else {
+            v.shift_right(1);
         }
     }
+
+    z
 }
 
 pub fn ghash(input: &BitVec, hash_subkey: &BitVec) -> BitVec {
@@ -418,9 +415,9 @@ pub fn ghash(input: &BitVec, hash_subkey: &BitVec) -> BitVec {
     let mut y_block: BitVec = bitvec![0; 128];
 
     for chunk in input.chunks(128) {
-        // y_block is updated in place
-        block_add(&mut y_block, &chunk.to_bitvec());
-        block_mult(&mut y_block, hash_subkey);
+        let chunk_bitvec: BitVec = chunk.to_bitvec();
+        block_add(&mut y_block, &chunk_bitvec);
+        y_block = block_mult(&mut y_block, hash_subkey);
     }
 
     y_block
@@ -495,7 +492,6 @@ pub fn aes_ecb_cipher(block: &[u8], key: &[u8]) -> Vec<u8> {
 
     encrypted_block.to_vec()
 }
-
 
 // NOTE: test_key_expansion() and test_ciphers() can only be tested if Nk == 8
 //       These tests were run and passed at the time of this writing for 
