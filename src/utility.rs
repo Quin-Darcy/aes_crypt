@@ -1,3 +1,7 @@
+use std::ops::BitXorAssign;
+
+use bitvec::prelude::*;
+
 use crate::constants::{
     BINS,
     GLOBAL_PRODUCT_CACHE,
@@ -268,6 +272,230 @@ pub fn inv_cipher(state: &mut [[u8; 4]; 4], w: &Vec<u32>) {
     roundkey = [w[0], w[1], w[2], w[3]];
     add_roundkey(state, roundkey);
 }
+
+// This converts the byte_slice into one bitvec
+pub fn byteslice_to_bitvec(byte_slice: &[u8]) -> BitVec {
+    let num_bits = byte_slice.len() * 8;
+    let mut bv: BitVec = BitVec::with_capacity(num_bits);
+
+    for &byte in byte_slice {
+        for i in 0..8 {
+            if byte & (1 << (7 - i)) != 0 {
+                bv.push(true);
+            } else {
+                bv.push(false);
+            }
+        }
+    }
+
+    bv
+}
+
+// This converts a bitslice to a bytevec
+pub fn bitslice_to_bytevec(bitslice: &BitVec) -> Vec<u8> {
+    let num_bytes = bitslice.len() / 8;
+    let mut bytevec: Vec<u8> = Vec::with_capacity(num_bytes);
+
+    for chunk in bitslice.chunks(8) {
+        let mut byte = 0_u8;
+
+        for (i, bit) in chunk.iter().enumerate() {
+            if *bit {
+                byte |= 1 << (7 - i);
+            }
+        }
+        bytevec.push(byte);
+    }
+
+    bytevec
+}
+
+// Returns the least significant bits
+fn lsb(bitslice: &BitVec, num_bits: usize) -> BitVec {
+    // Ensure num_bits is not greater than the length of the bit vector.
+    let len = bitslice.len();
+    let num_bits = num_bits.min(len);
+
+    // Calculate the start index for slicing.
+    let start = if len > num_bits { len - num_bits } else { 0 };
+
+    // Slice the BitVec from the calculated start index to the end.
+    bitslice[start..].to_bitvec()
+}
+
+// Returns the most significant bits
+pub fn msb(bitslice: &BitVec, num_bits: usize) -> BitVec {
+    // Ensure num_bits is not greater than the length of the bit vector.
+    let num_bits = num_bits.min(bitslice.len());
+
+    // Slice the BitVec from the beginning to the desired length.
+    bitslice[..num_bits].to_bitvec()
+}
+
+pub fn inc(bits: &BitVec, s: usize) -> BitVec {
+    let len = bits.len();
+    if s > len {
+        println!("[{}] Error: Invalid value for s.", "inc");
+        panic!();
+    }
+
+    // Get the most significant (len - s) bits
+    let msb_bits = msb(bits, len - s);
+
+    // Get the least significant s bits
+    let lsb_bits = lsb(bits, s);
+
+    // Convert the least significant s bits to an integer
+    let mut lsb_value = 0;
+    for bit in lsb_bits {
+        lsb_value = (lsb_value << 1) | (bit as u64);
+    }
+
+    // Increment the integer modulo 2^s
+    lsb_value = (lsb_value + 1) & ((1 << s) - 1);
+
+    // Convert the incremented integer back to a bit string of length s
+    let mut new_lsb_bits: BitVec = BitVec::with_capacity(s);
+    for _ in 0..s {
+        new_lsb_bits.push((lsb_value & 1) == 1);
+        lsb_value >>= 1;
+    }
+    new_lsb_bits.reverse();
+
+    // Concatenate the unchanged MSB with the incremented LSB
+    let mut result = msb_bits;
+    result.extend(new_lsb_bits);
+
+    result
+}
+
+
+// This function adds two 128-bit blocks in place
+fn block_add(block1: &mut BitVec, block2: &BitVec) {
+    if block1.len() !=  block2.len() {
+        println!("[{}] Error: Invalid block sizes: {}, {}", "block_add", block1.len(), block2.len());
+        panic!();
+    }
+
+    block1.bitxor_assign(block2);
+}
+
+// This function computes the product of two 128-bit blocks in place
+fn block_mult(block1: &BitVec, block2: &BitVec) {
+    if block1.len() != 128 || block2.len() != 128 {
+        println!("[{}] Error: Invalid block sizes", "block_mult");
+        panic!();
+    }
+
+    // Initialize fixed block
+    let mut r: BitVec = bitvec![1, 1, 1, 0, 0, 0, 0, 1];
+    r.extend(bitvec![0; 120]);
+
+    // Convert block1 into a little-endian bitvec 
+    let mut bit_block1: BitVec = block1.clone();
+    bit_block1.reverse();
+
+    // Initialize Z_0 and V_0
+    let mut z: BitVec = bitvec![0; 128];
+    let mut v: BitVec = block2.clone();
+
+    for i in 0..128 {
+        if bit_block1[i] {
+            block_add(&mut z, &v);
+        }
+
+        let v_lsb = v[v.len() - 1];
+        v.shift_right(1);
+
+        if v_lsb {
+            block_add(&mut v, &r);
+        }
+    }
+}
+
+pub fn ghash(input: &BitVec, hash_subkey: &BitVec) -> BitVec {
+    // Initialize the y block
+    let mut y_block: BitVec = bitvec![0; 128];
+
+    for chunk in input.chunks(128) {
+        // y_block is updated in place
+        block_add(&mut y_block, &chunk.to_bitvec());
+        block_mult(&mut y_block, hash_subkey);
+    }
+
+    y_block
+}
+
+// Galois/Counter Mode
+pub fn gctr(icb: &BitVec, input: &BitVec, key: &[u8]) -> BitVec {
+    if input.len() == 0 {
+        return input.clone();
+    }
+
+    // Total number of blocks which can contain the input
+    let num_blocks = (input.len() + 127) / 128;
+
+    // Initialize the counter block
+    let mut counter_block: BitVec = icb.to_bitvec();
+
+    // Initialize y_blocks
+    let mut y_blocks: BitVec = BitVec::with_capacity(input.len());
+
+    for (i, chunk) in input.chunks(128).enumerate() {
+        // Convert the counter block to bytes in order to send it to the block cipher
+        let counter_block_bytes = bitslice_to_bytevec(&counter_block);
+
+        // Encrypt the counter block and convert the result back to a BitVec
+        let cipher_bits: BitVec = byteslice_to_bitvec(&aes_ecb_cipher(&counter_block_bytes, key));
+
+        // Set x_block equal to the current 128 (or less) bit chunk in the input
+        let mut x_block = chunk.to_bitvec();
+
+        // XOR the encrypted counter block with the current x_block
+        if i < num_blocks - 1 {
+            block_add(&mut x_block, &cipher_bits);
+        } else {
+            // On the last iteration, in the case of a partial block, get the same number of significant bits 
+            // as are in the number of bits in the last x_block and perform the XOR with those bits
+            let cipher_msb = msb(&cipher_bits, x_block.len());
+            block_add(&mut x_block, &cipher_msb);
+        }
+        
+        // Append the XORed x_block to the y_blocks
+        y_blocks.extend(x_block);
+
+        // Increment the counter - happens here since first counter block was inititialized to ICB
+        counter_block = inc(&counter_block, 32);
+    }
+
+    y_blocks
+}
+
+pub fn aes_ecb_cipher(block: &[u8], key: &[u8]) -> Vec<u8> {
+    let key_schedule = key_expansion(key);
+
+    // Convert the 16-byte block into the AES state matrix
+    let mut state = [[0u8; 4]; 4];
+    for i in 0..4 {
+        for j in 0..4 {
+            state[j][i] = block[i * 4 + j];
+        }
+    }
+
+    // Perform the AES cipher operation
+    cipher(&mut state, &key_schedule);
+
+    // Convert the state matrix back into a 16-byte block
+    let mut encrypted_block = [0u8; 16];
+    for i in 0..4 {
+        for j in 0..4 {
+            encrypted_block[i * 4 + j] = state[j][i];
+        }
+    }
+
+    encrypted_block.to_vec()
+}
+
 
 // NOTE: test_key_expansion() and test_ciphers() can only be tested if Nk == 8
 //       These tests were run and passed at the time of this writing for 

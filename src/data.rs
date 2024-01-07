@@ -16,7 +16,7 @@ impl Data {
         }
     }
 
-    pub fn from_plain_text_bytes(raw_data: &[u8]) -> Self {
+    pub fn from_plaintext_bytes(raw_data: &[u8]) -> Self {
         // Compute the amount of padding needed. The total number of bytes 
         // needs to be a multiple of the block size, e.g., 16 bytes. We will always
         // add padding. This means if raw_data.len() % BPB == 0, we will add BPB 
